@@ -242,17 +242,18 @@ public class LZWTool {
                 String pc = p + c;
                 Integer pcCode = cb.get(pc);
 
-                if (pcCode != null) {
-                    p = pc;
-                    pCode = pcCode;
-                } else {
-                    if (pCode != -1) {
-                        BinaryStdOut.write(pCode, W);
-                        wrote = true;
-                    }
-
-                    if (nextCode < L) cb.put(pc, nextCode++);
-                    else if (W < cfg.maxW) { W++; L = 1 << W; cb.put(pc, nextCode++); }
+               if (nextCode == L && W < cfg.maxW) {
+                W++;
+                L = 1 << W;
+            }   
+                if (nextCode < L) {
+                    cb.put(pc, nextCode++);
+                } else if (cfg.policy == Policy.RESET) {
+                    BinaryStdOut.write(CLEAR, W);
+                    W = cfg.minW; L = 1 << W; nextCode = BASE;
+                    cb = new EncoderCodebook();
+                    for (int i = 0; i < A; i++) cb.put(cfg.alphabet.get(i), i);
+                }   
                     else if (cfg.policy == Policy.RESET) {
                         BinaryStdOut.write(CLEAR, W);
                         W = cfg.minW; L = 1 << W; nextCode = BASE;
@@ -264,7 +265,6 @@ public class LZWTool {
                     Integer cCode = cb.get(c);
                     pCode = (cCode != null) ? cCode : -1;
                 }
-            }
 
             if (!p.isEmpty() && pCode != -1) {
                 BinaryStdOut.write(pCode, W);
