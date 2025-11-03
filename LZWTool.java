@@ -13,7 +13,8 @@ public class LZWTool {
     private static final int BITS_PER_POLICY = 2;
     private static final int BITS_PER_WIDTH = 5;
     private static final int BITS_PER_A_SIZE = 16;
-    private static final int BITS_PER_SYMBOL = 8;
+
+    private int bitsPerSymbol; // now dynamic per alphabet
 
     // Config holder 
     private final class Config {
@@ -77,6 +78,8 @@ public class LZWTool {
             A = cfg.alphabet.size();
             CLEAR = A;
             BASE = A + 1;
+            bitsPerSymbol = (int) Math.ceil(Math.log(A) / Math.log(2));
+            if (bitsPerSymbol < 1) bitsPerSymbol = 1;
             compress(cfg);
         } else if ("expand".equals(cfg.mode)) {
             expand();
@@ -98,7 +101,7 @@ public class LZWTool {
             throw new RuntimeException("Error reading alphabet: " + path, e);
         }
 
-        // Ensure full 8-bit alphabet coverage
+        // Ensure 8-bit coverage safety net
         for (int i = 0; i < 256; i++) {
             String s = new String(new byte[]{(byte) i}, StandardCharsets.ISO_8859_1);
             symbols.add(s);
@@ -115,7 +118,7 @@ public class LZWTool {
 
         for (String symbol : cfg.alphabet) {
             byte[] bytes = symbol.getBytes(StandardCharsets.ISO_8859_1);
-            BinaryStdOut.write(bytes[0] & 0xFF, BITS_PER_SYMBOL);
+            BinaryStdOut.write(bytes[0] & 0xFF, bitsPerSymbol);
         }
     }
 
@@ -129,13 +132,15 @@ public class LZWTool {
 
         h.alphabet = new ArrayList<>(alphabetSize);
         for (int i = 0; i < alphabetSize; i++) {
-            int val = BinaryStdIn.readInt(BITS_PER_SYMBOL);
+            int val = BinaryStdIn.readInt(8); // still 8 here for compatibility
             h.alphabet.add(new String(new byte[]{(byte) val}, StandardCharsets.ISO_8859_1));
         }
 
         A = alphabetSize;
         CLEAR = A;
         BASE = A + 1;
+        bitsPerSymbol = (int) Math.ceil(Math.log(A) / Math.log(2));
+        if (bitsPerSymbol < 1) bitsPerSymbol = 1;
         return h;
     }
 
@@ -158,11 +163,8 @@ public class LZWTool {
     private void validateConfig(Config cfg) {
         if (cfg.mode == null) throw new IllegalArgumentException("Mode required.");
         if (cfg.alphabetPath == null) throw new IllegalArgumentException("Alphabet path required.");
-
-        // allow smaller widths (minW ≥ 3 instead of ≥ 9)
         if (cfg.minW < 3 || cfg.maxW > 16 || cfg.minW > cfg.maxW)
             throw new IllegalArgumentException("Invalid width range.");
-
         if (!new File(cfg.alphabetPath).exists())
             throw new IllegalArgumentException("Alphabet not found: " + cfg.alphabetPath);
     }
@@ -228,7 +230,7 @@ public class LZWTool {
             boolean wrote = false;
             while (true) {
                 int b;
-                try { b = BinaryStdIn.readInt(BITS_PER_SYMBOL); }
+                try { b = BinaryStdIn.readInt(bitsPerSymbol); }
                 catch (NoSuchElementException e) { break; }
 
                 String c = new String(new byte[]{(byte) b}, StandardCharsets.ISO_8859_1);
@@ -318,7 +320,7 @@ public class LZWTool {
                 else break;
 
                 for (char ch : cur.toCharArray())
-                    BinaryStdOut.write(ch, BITS_PER_SYMBOL);
+                    BinaryStdOut.write(ch, bitsPerSymbol);
 
                 if (prev != -1) {
                     String newStr = prevStr + cur.substring(0, 1);
