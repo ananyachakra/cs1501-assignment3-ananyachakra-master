@@ -188,13 +188,19 @@ public class LZWTool {
                 if (cb.get(pc) != null) {
                     p = pc;
                 } else {
-                    Integer pCode = cb.get(p);
-                    if (pCode != null) BinaryStdOut.write(pCode, W);
-
+                    // Grow width *before* writing any code that might overflow current W
                     if (nextCode >= L && W < cfg.maxW) {
                         W++;
                         L = 1 << W;
                     }
+
+                    Integer pCode = cb.get(p);
+                    if (pCode != null && pCode < L) {
+                        BinaryStdOut.write(pCode, W);
+                    } else if (pCode != null) {
+                        throw new RuntimeException("Code out of range for width " + W + ": " + pCode);
+                    }
+
 
                     if (nextCode < L) {
                         cb.put(pc, nextCode++);
