@@ -4,10 +4,9 @@ import java.util.*;
 
 public class LZWTool {
 
-    // --- Constants and Globals ---
-    private int A;         // Alphabet size
-    private int CLEAR;     // Reset code
-    private int BASE;      // First code for new entries
+    private int A;        
+    private int CLEAR;    
+    private int BASE;     
     private static final int MAX_CODES = 1 << 16;
 
     private static final int BITS_PER_POLICY = 2;
@@ -15,7 +14,6 @@ public class LZWTool {
     private static final int BITS_PER_A_SIZE = 16;
     private static final int BITS_PER_SYMBOL = 8;
 
-    // --- Config holder ---
     private final class Config {
         String mode;
         int minW = 9, maxW = 16;
@@ -24,7 +22,6 @@ public class LZWTool {
         List<String> alphabet;
     }
 
-    // --- Policies ---
     private enum Policy {
         FREEZE, RESET, LRU, LFU;
 
@@ -59,7 +56,6 @@ public class LZWTool {
         }
     }
 
-    // --- Main Entry ---
     public static void main(String[] args) {
         try {
             new LZWTool().run(args);
@@ -85,7 +81,6 @@ public class LZWTool {
         }
     }
 
-    // --- Alphabet Reader ---
     private List<String> readAlphabet(String path) {
         Set<String> symbols = new LinkedHashSet<>();
         try (BufferedReader br = new BufferedReader(
@@ -98,7 +93,6 @@ public class LZWTool {
             throw new RuntimeException("Error reading alphabet: " + path, e);
         }
 
-        // Ensure 8-bit coverage
         for (int i = 0; i < 256; i++) {
             String s = new String(new byte[]{(byte) i}, StandardCharsets.ISO_8859_1);
             symbols.add(s);
@@ -106,20 +100,17 @@ public class LZWTool {
         return new ArrayList<>(symbols);
     }
 
-    // --- Header Writer ---
     private void writeHeader(Config cfg) {
         BinaryStdOut.write(cfg.policy.code(), BITS_PER_POLICY);
         BinaryStdOut.write(cfg.minW, BITS_PER_WIDTH);
         BinaryStdOut.write(cfg.maxW, BITS_PER_WIDTH);
         BinaryStdOut.write(cfg.alphabet.size(), BITS_PER_A_SIZE);
-
         for (String symbol : cfg.alphabet) {
             byte[] bytes = symbol.getBytes(StandardCharsets.ISO_8859_1);
-            BinaryStdOut.write(bytes[0] & 0xFF, BITS_PER_SYMBOL);
+            BinaryStdOut.write(bytes[0] & 0xFF, BITS_PER_SYMBOL); 
         }
     }
 
-    // --- Header Reader ---
     private Config readHeader() {
         Config h = new Config();
         h.policy = Policy.fromCode(BinaryStdIn.readInt(BITS_PER_POLICY));
@@ -139,7 +130,6 @@ public class LZWTool {
         return h;
     }
 
-    // --- Arg Parser ---
     private Config parseArgs(String[] args) {
         Config cfg = new Config();
         for (int i = 0; i < args.length; i++) {
@@ -163,96 +153,52 @@ public class LZWTool {
             throw new IllegalArgumentException("Alphabet not found: " + cfg.alphabetPath);
     }
 
-    // --- Codebook + Trackers ---
     private static class EncoderCodebook {
         private final TSTmod<Integer> tst = new TSTmod<>();
-        private final Map<Integer, String> codeToString = new HashMap<>();
         private final Map<String, Integer> stringToCode = new HashMap<>();
 
         public void put(String s, int code) {
-            tst.put(new StringBuilder(s), code);
+            tst.put(new StringBuilder(s), code); 
             stringToCode.put(s, code);
-            codeToString.put(code, s);
         }
         public Integer get(String s) { return stringToCode.get(s); }
-        public void delete(int code) {
-            String s = codeToString.remove(code);
-            if (s != null) stringToCode.remove(s);
-        }
     }
 
-    // --- LRU/LFU helpers (kept simple) ---
-    private static class LRUTracker {
-        private final Map<Integer, String> map = new LinkedHashMap<>();
-        public void access(int code, String s) { map.remove(code); map.put(code, s); }
-        public int getLRUCode() { return map.isEmpty() ? -1 : map.keySet().iterator().next(); }
-        public void remove(int code) { map.remove(code); }
-    }
-    private static class LFUTracker {
-        private final Map<Integer, Integer> freq = new HashMap<>();
-        public void access(int code) { freq.put(code, freq.getOrDefault(code, 0) + 1); }
-        public int getLFUCode() {
-            int min = Integer.MAX_VALUE, key = -1;
-            for (var e : freq.entrySet())
-                if (e.getValue() < min) { min = e.getValue(); key = e.getKey(); }
-            return key;
-        }
-        public void remove(int code) { freq.remove(code); }
-    }
-
-    // --- Compressor ---
     private void compress(Config cfg) {
         int W = cfg.minW, L = 1 << W, nextCode = BASE;
         EncoderCodebook cb = new EncoderCodebook();
-        LRUTracker lru = new LRUTracker();
-        LFUTracker lfu = new LFUTracker();
-
-        // Initialize dictionary
-        for (int i = 0; i < A; i++) {
-            String s = cfg.alphabet.get(i);
-            cb.put(s, i);
-            lru.access(i, s);
-            lfu.access(i);
-        }
+        for (int i = 0; i < A; i++) cb.put(cfg.alphabet.get(i), i);
 
         writeHeader(cfg);
-        String p = "";
-        int pCode = -1;
+
+        int firstByte;
+        try { firstByte = BinaryStdIn.readInt(BITS_PER_SYMBOL); }
+        catch (NoSuchElementException e) { BinaryStdOut.close(); return; }
+        String p = new String(new byte[]{(byte) firstByte}, StandardCharsets.ISO_8859_1);
 
         try {
-            boolean wrote = false;
             while (true) {
                 int b;
                 try { b = BinaryStdIn.readInt(BITS_PER_SYMBOL); }
                 catch (NoSuchElementException e) { break; }
 
                 String c = new String(new byte[]{(byte) b}, StandardCharsets.ISO_8859_1);
-
-                // SAFETY: grow width before writing or adding codes too large
-                if (nextCode >= (1 << W) && W < cfg.maxW) {
-                    W++;
-                    L = 1 << W;
-                }
-
-                if (cb.get(c) == null && nextCode < L) {
-                    cb.put(c, nextCode++);
-                }
-
                 String pc = p + c;
-                Integer pcCode = cb.get(pc);
 
-                if (pcCode != null) {
+                if (cb.get(pc) != null) {
                     p = pc;
-                    pCode = pcCode;
                 } else {
-                    if (pCode != -1) {
-                        BinaryStdOut.write(pCode, W);
-                        wrote = true;
+                    Integer pCode = cb.get(p);
+                    if (pCode != null) BinaryStdOut.write(pCode, W);
+
+                    if (nextCode >= L && W < cfg.maxW) {
+                        W++;
+                        L = 1 << W;
                     }
 
                     if (nextCode < L) {
                         cb.put(pc, nextCode++);
-                    } else if (cfg.policy == Policy.RESET) {
+                    } else if (W >= cfg.maxW && cfg.policy == Policy.RESET) {
                         BinaryStdOut.write(CLEAR, W);
                         W = cfg.minW;
                         L = 1 << W;
@@ -262,75 +208,66 @@ public class LZWTool {
                     }
 
                     p = c;
-                    Integer cCode = cb.get(c);
-                    pCode = (cCode != null) ? cCode : -1;
                 }
             }
 
-            if (!p.isEmpty() && pCode != -1) {
-                BinaryStdOut.write(pCode, W);
-                wrote = true;
+            if (!p.isEmpty()) {
+                Integer pCode = cb.get(p);
+                if (pCode != null) BinaryStdOut.write(pCode, W);
             }
-
             BinaryStdOut.flush();
-            if (!wrote) throw new RuntimeException("Compressor wrote no codes.");
         } finally {
             BinaryStdOut.close();
         }
     }
 
-    // --- Expander ---
     private void expand() {
         Config cfg = readHeader();
         int W = cfg.minW, L = 1 << W, nextCode = BASE;
         Policy policy = cfg.policy;
 
         List<String> dict = new ArrayList<>(Collections.nCopies(MAX_CODES, null));
-        LRUTracker lru = new LRUTracker();
-        LFUTracker lfu = new LFUTracker();
+        for (int i = 0; i < A; i++) dict.set(i, cfg.alphabet.get(i));
 
-        for (int i = 0; i < A; i++) {
-            String s = cfg.alphabet.get(i);
-            dict.set(i, s);
-            lru.access(i, s);
-            lfu.access(i);
-        }
-        dict.set(CLEAR, "<CLR>");
+        int prevCode;
+        try { prevCode = BinaryStdIn.readInt(W); }
+        catch (NoSuchElementException e) { return; }
+
+        String prevStr = dict.get(prevCode);
+        for (char ch : prevStr.toCharArray()) BinaryStdOut.write((int) ch, BITS_PER_SYMBOL);
 
         try {
-            int prev = -1;
-            String prevStr = "";
-
             while (!BinaryStdIn.isEmpty()) {
                 if (nextCode == L && W < cfg.maxW) { W++; L = 1 << W; }
-                int code = BinaryStdIn.readInt(W);
+                int curCode = BinaryStdIn.readInt(W);
 
-                if (code == CLEAR && policy == Policy.RESET) {
+                if (curCode == CLEAR && policy == Policy.RESET) {
                     W = cfg.minW; L = 1 << W; nextCode = BASE;
                     dict = new ArrayList<>(Collections.nCopies(MAX_CODES, null));
                     for (int i = 0; i < A; i++) dict.set(i, cfg.alphabet.get(i));
-                    dict.set(CLEAR, "<CLR>");
-                    prev = -1; prevStr = "";
+
+                    if (BinaryStdIn.isEmpty()) break;
+                    prevCode = BinaryStdIn.readInt(W);
+                    prevStr = dict.get(prevCode);
+                    for (char ch : prevStr.toCharArray()) BinaryStdOut.write((int) ch, BITS_PER_SYMBOL);
                     continue;
                 }
 
-                String cur;
-                if (code < nextCode) cur = dict.get(code);
-                else if (code == nextCode && prev != -1)
-                    cur = prevStr + prevStr.substring(0, 1);
+                String curStr;
+                if (curCode < nextCode) curStr = dict.get(curCode);
+                else if (curCode == nextCode && prevCode != -1)
+                    curStr = prevStr + prevStr.substring(0, 1);
                 else break;
 
-                for (char ch : cur.toCharArray())
-                    BinaryStdOut.write(ch, BITS_PER_SYMBOL);
+                for (char ch : curStr.toCharArray()) BinaryStdOut.write((int) ch, BITS_PER_SYMBOL);
 
-                if (prev != -1) {
-                    String newStr = prevStr + cur.substring(0, 1);
+                if (prevCode != -1) {
+                    String newStr = prevStr + curStr.substring(0, 1);
                     if (nextCode < L) dict.set(nextCode++, newStr);
-                    else if (W < cfg.maxW) dict.set(nextCode++, newStr);
                 }
 
-                prev = code;
-                prevStr = cur;
+                prevCode = curCode;
+                prevStr = curStr;
             }
         } catch (NoSuchElementException ignore) {
         } finally {
