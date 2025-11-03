@@ -4,7 +4,7 @@ import java.util.*;
 
 public class LZWTool {
 
-    // Constants and Globals
+    // --- Constants and Globals ---
     private int A;         // Alphabet size
     private int CLEAR;     // Reset code
     private int BASE;      // First code for new entries
@@ -13,10 +13,9 @@ public class LZWTool {
     private static final int BITS_PER_POLICY = 2;
     private static final int BITS_PER_WIDTH = 5;
     private static final int BITS_PER_A_SIZE = 16;
+    private static final int BITS_PER_SYMBOL = 8;
 
-    private int bitsPerSymbol; // now dynamic per alphabet
-
-    // Config holder 
+    // --- Config holder ---
     private final class Config {
         String mode;
         int minW = 9, maxW = 16;
@@ -25,7 +24,7 @@ public class LZWTool {
         List<String> alphabet;
     }
 
-    // Policies
+    // --- Policies ---
     private enum Policy {
         FREEZE, RESET, LRU, LFU;
 
@@ -60,7 +59,7 @@ public class LZWTool {
         }
     }
 
-    // Main Entry 
+    // --- Main Entry ---
     public static void main(String[] args) {
         try {
             new LZWTool().run(args);
@@ -78,8 +77,6 @@ public class LZWTool {
             A = cfg.alphabet.size();
             CLEAR = A;
             BASE = A + 1;
-            bitsPerSymbol = (int) Math.ceil(Math.log(A) / Math.log(2));
-            if (bitsPerSymbol < 1) bitsPerSymbol = 1;
             compress(cfg);
         } else if ("expand".equals(cfg.mode)) {
             expand();
@@ -88,7 +85,7 @@ public class LZWTool {
         }
     }
 
-    // Alphabet Reader 
+    // --- Alphabet Reader ---
     private List<String> readAlphabet(String path) {
         Set<String> symbols = new LinkedHashSet<>();
         try (BufferedReader br = new BufferedReader(
@@ -101,7 +98,7 @@ public class LZWTool {
             throw new RuntimeException("Error reading alphabet: " + path, e);
         }
 
-        // Ensure 8-bit coverage safety net
+        // Ensure 8-bit coverage
         for (int i = 0; i < 256; i++) {
             String s = new String(new byte[]{(byte) i}, StandardCharsets.ISO_8859_1);
             symbols.add(s);
@@ -109,7 +106,7 @@ public class LZWTool {
         return new ArrayList<>(symbols);
     }
 
-    // Header Writer 
+    // --- Header Writer ---
     private void writeHeader(Config cfg) {
         BinaryStdOut.write(cfg.policy.code(), BITS_PER_POLICY);
         BinaryStdOut.write(cfg.minW, BITS_PER_WIDTH);
@@ -118,11 +115,11 @@ public class LZWTool {
 
         for (String symbol : cfg.alphabet) {
             byte[] bytes = symbol.getBytes(StandardCharsets.ISO_8859_1);
-            BinaryStdOut.write(bytes[0] & 0xFF, bitsPerSymbol);
+            BinaryStdOut.write(bytes[0] & 0xFF, BITS_PER_SYMBOL);
         }
     }
 
-    // Header Reader
+    // --- Header Reader ---
     private Config readHeader() {
         Config h = new Config();
         h.policy = Policy.fromCode(BinaryStdIn.readInt(BITS_PER_POLICY));
@@ -132,19 +129,17 @@ public class LZWTool {
 
         h.alphabet = new ArrayList<>(alphabetSize);
         for (int i = 0; i < alphabetSize; i++) {
-            int val = BinaryStdIn.readInt(8); // still 8 here for compatibility
+            int val = BinaryStdIn.readInt(BITS_PER_SYMBOL);
             h.alphabet.add(new String(new byte[]{(byte) val}, StandardCharsets.ISO_8859_1));
         }
 
         A = alphabetSize;
         CLEAR = A;
         BASE = A + 1;
-        bitsPerSymbol = (int) Math.ceil(Math.log(A) / Math.log(2));
-        if (bitsPerSymbol < 1) bitsPerSymbol = 1;
         return h;
     }
 
-    // Argument Parser
+    // --- Arg Parser ---
     private Config parseArgs(String[] args) {
         Config cfg = new Config();
         for (int i = 0; i < args.length; i++) {
@@ -159,17 +154,16 @@ public class LZWTool {
         return cfg;
     }
 
-    // Validation
     private void validateConfig(Config cfg) {
         if (cfg.mode == null) throw new IllegalArgumentException("Mode required.");
         if (cfg.alphabetPath == null) throw new IllegalArgumentException("Alphabet path required.");
-        if (cfg.minW < 3 || cfg.maxW > 16 || cfg.minW > cfg.maxW)
+        if (cfg.minW < 1 || cfg.maxW > 16 || cfg.minW > cfg.maxW)
             throw new IllegalArgumentException("Invalid width range.");
         if (!new File(cfg.alphabetPath).exists())
             throw new IllegalArgumentException("Alphabet not found: " + cfg.alphabetPath);
     }
 
-    // Codebook + Trackers
+    // --- Codebook + Trackers ---
     private static class EncoderCodebook {
         private final TSTmod<Integer> tst = new TSTmod<>();
         private final Map<Integer, String> codeToString = new HashMap<>();
@@ -180,22 +174,20 @@ public class LZWTool {
             stringToCode.put(s, code);
             codeToString.put(code, s);
         }
-
         public Integer get(String s) { return stringToCode.get(s); }
-
         public void delete(int code) {
             String s = codeToString.remove(code);
             if (s != null) stringToCode.remove(s);
         }
     }
 
+    // --- LRU/LFU helpers (kept simple) ---
     private static class LRUTracker {
         private final Map<Integer, String> map = new LinkedHashMap<>();
         public void access(int code, String s) { map.remove(code); map.put(code, s); }
         public int getLRUCode() { return map.isEmpty() ? -1 : map.keySet().iterator().next(); }
         public void remove(int code) { map.remove(code); }
     }
-
     private static class LFUTracker {
         private final Map<Integer, Integer> freq = new HashMap<>();
         public void access(int code) { freq.put(code, freq.getOrDefault(code, 0) + 1); }
@@ -208,13 +200,14 @@ public class LZWTool {
         public void remove(int code) { freq.remove(code); }
     }
 
-    // Compressor
+    // --- Compressor ---
     private void compress(Config cfg) {
         int W = cfg.minW, L = 1 << W, nextCode = BASE;
         EncoderCodebook cb = new EncoderCodebook();
         LRUTracker lru = new LRUTracker();
         LFUTracker lfu = new LFUTracker();
 
+        // Initialize dictionary
         for (int i = 0; i < A; i++) {
             String s = cfg.alphabet.get(i);
             cb.put(s, i);
@@ -230,33 +223,40 @@ public class LZWTool {
             boolean wrote = false;
             while (true) {
                 int b;
-                try { b = BinaryStdIn.readInt(bitsPerSymbol); }
+                try { b = BinaryStdIn.readInt(BITS_PER_SYMBOL); }
                 catch (NoSuchElementException e) { break; }
 
                 String c = new String(new byte[]{(byte) b}, StandardCharsets.ISO_8859_1);
-                if (cb.get(c) == null) {
-                    cb.put(c, nextCode);
-                    nextCode = Math.min(nextCode + 1, (1 << cfg.maxW) - 1);
+
+                // SAFETY: grow width before writing or adding codes too large
+                if (nextCode >= (1 << W) && W < cfg.maxW) {
+                    W++;
+                    L = 1 << W;
+                }
+
+                if (cb.get(c) == null && nextCode < L) {
+                    cb.put(c, nextCode++);
                 }
 
                 String pc = p + c;
                 Integer pcCode = cb.get(pc);
 
-               if (nextCode == L && W < cfg.maxW) {
-                W++;
-                L = 1 << W;
-            }   
-                if (nextCode < L) {
-                    cb.put(pc, nextCode++);
-                } else if (cfg.policy == Policy.RESET) {
-                    BinaryStdOut.write(CLEAR, W);
-                    W = cfg.minW; L = 1 << W; nextCode = BASE;
-                    cb = new EncoderCodebook();
-                    for (int i = 0; i < A; i++) cb.put(cfg.alphabet.get(i), i);
-                }   
-                    else if (cfg.policy == Policy.RESET) {
+                if (pcCode != null) {
+                    p = pc;
+                    pCode = pcCode;
+                } else {
+                    if (pCode != -1) {
+                        BinaryStdOut.write(pCode, W);
+                        wrote = true;
+                    }
+
+                    if (nextCode < L) {
+                        cb.put(pc, nextCode++);
+                    } else if (cfg.policy == Policy.RESET) {
                         BinaryStdOut.write(CLEAR, W);
-                        W = cfg.minW; L = 1 << W; nextCode = BASE;
+                        W = cfg.minW;
+                        L = 1 << W;
+                        nextCode = BASE;
                         cb = new EncoderCodebook();
                         for (int i = 0; i < A; i++) cb.put(cfg.alphabet.get(i), i);
                     }
@@ -265,6 +265,7 @@ public class LZWTool {
                     Integer cCode = cb.get(c);
                     pCode = (cCode != null) ? cCode : -1;
                 }
+            }
 
             if (!p.isEmpty() && pCode != -1) {
                 BinaryStdOut.write(pCode, W);
@@ -278,7 +279,7 @@ public class LZWTool {
         }
     }
 
-    // Expander
+    // --- Expander ---
     private void expand() {
         Config cfg = readHeader();
         int W = cfg.minW, L = 1 << W, nextCode = BASE;
@@ -320,7 +321,7 @@ public class LZWTool {
                 else break;
 
                 for (char ch : cur.toCharArray())
-                    BinaryStdOut.write(ch, bitsPerSymbol);
+                    BinaryStdOut.write(ch, BITS_PER_SYMBOL);
 
                 if (prev != -1) {
                     String newStr = prevStr + cur.substring(0, 1);
