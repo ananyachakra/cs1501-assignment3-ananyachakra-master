@@ -200,19 +200,15 @@ public class LZWTool {
                     p = pc;
                 } else {
                     Integer pCode = cb.get(p);
-                    if (pCode != null) {
-                        // --- FIX: prevent overflow; replace invalid codes with CLEAR instead of crashing ---
-                        if (pCode >= L) {
-                            pCode = CLEAR;  // ensures code fits within width
+                    // --- FIX: Increase width BEFORE writing if dictionary is full ---
+                        if (nextCode >= L && W < cfg.maxW) {
+                            W++;
+                            L = 1 << W;
                         }
-                        BinaryStdOut.write(pCode, W);
-                    }
 
-                    // Increase width after writing (keeps sync with decoder)
-                    if (nextCode >= L && W < cfg.maxW) {
-                        W++;
-                        L = 1 << W;
-                    }
+                        if (pCode != null) {
+                            BinaryStdOut.write(pCode, W);
+                        }
 
                     // Add new entry or reset if full
                     if (nextCode < L) {
