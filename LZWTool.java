@@ -106,7 +106,7 @@ public class LZWTool {
         return new ArrayList<>(symbols);
     }
 
-    //Header Writer 
+    // Header Writer 
     private void writeHeader(Config cfg) {
         BinaryStdOut.write(cfg.policy.code(), BITS_PER_POLICY);
         BinaryStdOut.write(cfg.minW, BITS_PER_WIDTH);
@@ -119,7 +119,7 @@ public class LZWTool {
         }
     }
 
-    //Header Reader
+    // Header Reader
     private Config readHeader() {
         Config h = new Config();
         h.policy = Policy.fromCode(BinaryStdIn.readInt(BITS_PER_POLICY));
@@ -158,8 +158,11 @@ public class LZWTool {
     private void validateConfig(Config cfg) {
         if (cfg.mode == null) throw new IllegalArgumentException("Mode required.");
         if (cfg.alphabetPath == null) throw new IllegalArgumentException("Alphabet path required.");
-        if (cfg.minW < 9 || cfg.maxW > 16 || cfg.minW > cfg.maxW)
+
+        // allow smaller widths (minW ≥ 3 instead of ≥ 9)
+        if (cfg.minW < 3 || cfg.maxW > 16 || cfg.minW > cfg.maxW)
             throw new IllegalArgumentException("Invalid width range.");
+
         if (!new File(cfg.alphabetPath).exists())
             throw new IllegalArgumentException("Alphabet not found: " + cfg.alphabetPath);
     }
