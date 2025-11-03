@@ -4,19 +4,19 @@ import java.util.*;
 
 public class LZWTool {
 
-    // --- Global constants ---
-    private int A;      // Alphabet size
-    private int CLEAR;  // Reset code
-    private int BASE;   // First code available for new entries
-    private static final int MAX_CODES = 1 << 16;
+    // Global constants for tracking dictionary and bit widths
+    private int A;      // Alphabet size (number of symbols)
+    private int CLEAR;  // Code that signals a dictionary reset
+    private int BASE;   // First available code after alphabet entries
+    private static final int MAX_CODES = 1 << 16;  // Hard limit (16-bit max)
 
-    // --- Header bit widths ---
+    // Bit allocation for header and encoding
     private static final int BITS_PER_POLICY = 2;
     private static final int BITS_PER_WIDTH = 5;
     private static final int BITS_PER_A_SIZE = 16;
     private static final int BITS_PER_SYMBOL = 8;
 
-    // --- Configuration holder ---
+    // Object to hold runtime configuration
     private static final class Config {
         String mode;
         int minW = 9, maxW = 16;
@@ -25,7 +25,7 @@ public class LZWTool {
         List<String> alphabet;
     }
 
-    // --- Policy enum ---
+    // Policy enum for dictionary handling when full
     private enum Policy {
         FREEZE, RESET, LRU, LFU;
 
@@ -60,7 +60,7 @@ public class LZWTool {
         }
     }
 
-    // --- Entry point ---
+    // Program entry point
     public static void main(String[] args) {
         try {
             new LZWTool().run(args);
@@ -70,6 +70,7 @@ public class LZWTool {
         }
     }
 
+    // Routes between compression and expansion modes
     private void run(String[] args) {
         Config cfg = parseArgs(args);
         if ("compress".equals(cfg.mode)) {
@@ -86,7 +87,7 @@ public class LZWTool {
         }
     }
 
-    // --- Read custom alphabet file ---
+    // Reads the alphabet file and ensures ASCII coverage for safety
     private List<String> readAlphabet(String path) {
         Set<String> symbols = new LinkedHashSet<>();
         try (BufferedReader br = new BufferedReader(
@@ -99,7 +100,7 @@ public class LZWTool {
             throw new RuntimeException("Error reading alphabet: " + path, e);
         }
 
-        // Always ensure ASCII coverage (needed for generic inputs)
+        // Add all 256 possible 8-bit values to ensure general compatibility
         for (int i = 0; i < 256; i++) {
             String s = new String(new byte[]{(byte) i}, StandardCharsets.ISO_8859_1);
             symbols.add(s);
@@ -107,7 +108,7 @@ public class LZWTool {
         return new ArrayList<>(symbols);
     }
 
-    // --- Header writer/reader ---
+    // Writes compression metadata to the output file
     private void writeHeader(Config cfg) {
         BinaryStdOut.write(cfg.policy.code(), BITS_PER_POLICY);
         BinaryStdOut.write(cfg.minW, BITS_PER_WIDTH);
@@ -117,6 +118,7 @@ public class LZWTool {
             BinaryStdOut.write(s.getBytes(StandardCharsets.ISO_8859_1)[0] & 0xFF, BITS_PER_SYMBOL);
     }
 
+    // Reads the header when decompressing
     private Config readHeader() {
         Config h = new Config();
         h.policy = Policy.fromCode(BinaryStdIn.readInt(BITS_PER_POLICY));
@@ -136,7 +138,7 @@ public class LZWTool {
         return h;
     }
 
-    // --- Simple argument parser ---
+    // Simple argument parsing for command-line flags
     private Config parseArgs(String[] args) {
         Config c = new Config();
         for (int i = 0; i < args.length; i++) {
@@ -152,6 +154,7 @@ public class LZWTool {
         return c;
     }
 
+    // Ensures all parameters are valid before compression starts
     private void validateConfig(Config c) {
         if (c.minW < 3 || c.maxW > 16 || c.minW > c.maxW)
             throw new IllegalArgumentException("Invalid width range.");
@@ -159,7 +162,7 @@ public class LZWTool {
             throw new IllegalArgumentException("Alphabet file required.");
     }
 
-    // --- Minimal encoder dictionary wrapper ---
+    // Minimal encoder dictionary using both HashMap and TSTmod
     private static class EncoderCodebook {
         private final TSTmod<Integer> tst = new TSTmod<>();
         private final Map<String, Integer> map = new HashMap<>();
@@ -167,11 +170,11 @@ public class LZWTool {
         Integer get(String s) { return map.get(s); }
     }
 
-    // --- Compression ---
+    // Core compression logic
     private void compress(Config cfg) {
         int minBitsForAlphabet = (int) Math.ceil(Math.log(BASE) / Math.log(2));
-        int W = Math.max(cfg.minW, minBitsForAlphabet);
-        int L = 1 << W;
+        int W = Math.max(cfg.minW, minBitsForAlphabet);  // initial code width
+        int L = 1 << W;                                 // number of codes that fit in W bits
         int nextCode = BASE;
 
         EncoderCodebook cb = new EncoderCodebook();
@@ -194,20 +197,22 @@ public class LZWTool {
                 String pc = p + c;
 
                 if (cb.get(pc) != null) {
-                    p = pc;
+                    p = pc;  // Keep extending the phrase
                 } else {
                     Integer pCode = cb.get(p);
                     if (pCode != null) BinaryStdOut.write(pCode, W);
 
-                    // --- key fix: check width BEFORE inserting new entry ---
+                    // Increase bit width before inserting new entries if full
                     if (nextCode >= L && W < cfg.maxW) {
                         W++;
                         L = 1 << W;
                     }
 
+                    // Add new entry to dictionary
                     if (nextCode < L) {
                         cb.put(pc, nextCode++);
                     } else if (W >= cfg.maxW && cfg.policy == Policy.RESET) {
+                        // Reset if at max width and using RESET policy
                         BinaryStdOut.write(CLEAR, W);
                         W = cfg.minW;
                         L = 1 << W;
@@ -216,11 +221,11 @@ public class LZWTool {
                         for (int i = 0; i < A; i++) cb.put(cfg.alphabet.get(i), i);
                     }
 
-                    p = c;
+                    p = c;  // Start new phrase
                 }
             }
 
-            // Write last phrase
+            // Output the final phrase
             Integer pCode = cb.get(p);
             if (pCode != null) BinaryStdOut.write(pCode, W);
             BinaryStdOut.flush();
@@ -229,7 +234,7 @@ public class LZWTool {
         }
     }
 
-    // --- Expansion ---
+    // Core expansion logic (reverse of compression)
     private void expand() {
         Config cfg = readHeader();
         int minBitsForAlphabet = (int) Math.ceil(Math.log(BASE) / Math.log(2));
@@ -250,9 +255,12 @@ public class LZWTool {
 
         try {
             while (!BinaryStdIn.isEmpty()) {
+                // Increase width when dictionary is full and not yet at max
                 if (nextCode == L && W < cfg.maxW) { W++; L = 1 << W; }
 
                 int curCode = BinaryStdIn.readInt(W);
+
+                // Handle dictionary reset if the CLEAR code appears
                 if (curCode == CLEAR && policy == Policy.RESET) {
                     W = cfg.minW; L = 1 << W; nextCode = BASE;
                     dict = new ArrayList<>(Collections.nCopies(MAX_CODES, null));
